@@ -1,30 +1,63 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Deploys a Lambda (from ECR) behind API Gateway, using existing NAT instance for internet access.
+  Deploys a Docker-based Lambda from ECR with API Gateway and CodeBuild linked to GitHub.
 
 Parameters:
   ProjectName:
     Type: String
-    Description: Unique project name prefix
     Default: next-best-product-api
+    Description: "Prefix for resource names"
+
+  GitHubRepoURL:
+    Type: String
+    Description: "HTTPS URL of GitHub repo (e.g., https://github.com/user/repo.git)"
+
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: "Branch to trigger CodeBuild"
 
   VpcId:
     Type: AWS::EC2::VPC::Id
-    Description: VPC ID for Lambda
+    Description: "VPC for Lambda deployment"
 
   PrivateSubnetId:
     Type: AWS::EC2::Subnet::Id
-    Description: Private subnet ID for Lambda
+    Description: "Private subnet for Lambda"
 
-  LambdaSecurityGroupId:
-    Type: AWS::EC2::SecurityGroup::Id
-    Description: Security group ID for Lambda
-
-  EcrImageUri:
+  DeployLambda:
     Type: String
-    Description: URI of the ECR image for Lambda
+    Default: "false"
+    AllowedValues: ["true","false"]
+    Description: "Set to true after pushing the image to ECR"
+
+Conditions:
+  ShouldDeployLambda: !Equals [!Ref DeployLambda, "true"]
 
 Resources:
+
+  #################################################
+  # Security Groups
+  #################################################
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for Lambda function"
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${ProjectName}-lambda-sg
+
+  #################################################
+  # ECR Repository
+  #################################################
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ProjectName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
 
   #################################################
   # IAM Roles
@@ -34,7 +67,7 @@ Resources:
     Properties:
       RoleName: !Sub ${ProjectName}-Lambda-Role
       AssumeRolePolicyDocument:
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Principal:
@@ -43,21 +76,43 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+  CodeBuildExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-CodeBuild-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
       Policies:
-        - PolicyName: SageMakerInvokePolicy
+        - PolicyName: CodeBuildPermissions
           PolicyDocument:
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - sagemaker:InvokeEndpoint
-                Resource: "*"
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                Resource: !GetAtt ECRRepository.Arn
+              - Effect: Allow
+                Action:
+                  - lambda:UpdateFunctionCode
+                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}
 
   #################################################
-  # Lambda Function
+  # Lambda Function (Conditional)
   #################################################
   LambdaFunction:
     Type: AWS::Lambda::Function
+    Condition: ShouldDeployLambda
     Properties:
       FunctionName: !Ref ProjectName
       PackageType: Image
@@ -66,33 +121,38 @@ Resources:
       MemorySize: 512
       VpcConfig:
         SecurityGroupIds:
-          - !Ref LambdaSecurityGroupId
+          - !Ref LambdaSecurityGroup
         SubnetIds:
           - !Ref PrivateSubnetId
       Code:
-        ImageUri: !Ref EcrImageUri
+        ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}:latest
 
   #################################################
-  # API Gateway REST API
+  # API Gateway (Conditional)
   #################################################
-  ApiGateway:
+  ApiGatewayRestApi:
     Type: AWS::ApiGateway::RestApi
+    Condition: ShouldDeployLambda
     Properties:
       Name: !Sub ${ProjectName}-api
-      Description: API for Lambda next-best-product
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
 
-  ApiResource:
+  ApiGatewayResource:
     Type: AWS::ApiGateway::Resource
+    Condition: ShouldDeployLambda
     Properties:
-      RestApiId: !Ref ApiGateway
-      ParentId: !GetAtt ApiGateway.RootResourceId
-      PathPart: recommend
+      RestApiId: !Ref ApiGatewayRestApi
+      ParentId: !GetAtt ApiGatewayRestApi.RootResourceId
+      PathPart: next-best-product
 
-  ApiMethod:
+  ApiGatewayMethod:
     Type: AWS::ApiGateway::Method
+    Condition: ShouldDeployLambda
     Properties:
-      RestApiId: !Ref ApiGateway
-      ResourceId: !Ref ApiResource
+      RestApiId: !Ref ApiGatewayRestApi
+      ResourceId: !Ref ApiGatewayResource
       HttpMethod: POST
       AuthorizationType: NONE
       Integration:
@@ -100,19 +160,62 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
 
-  LambdaInvokePermission:
+  LambdaApiInvokePermission:
     Type: AWS::Lambda::Permission
+    Condition: ShouldDeployLambda
     Properties:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/POST/recommend
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/next-best-product
+
+  #################################################
+  # CodeBuild linked to GitHub
+  #################################################
+  CodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Ref ProjectName
+      ServiceRole: !GetAtt CodeBuildExecutionRole.Arn
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoURL
+        GitCloneDepth: 1
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: AWS_DEFAULT_REGION
+            Value: !Ref AWS::Region
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref ECRRepository
+          - Name: LAMBDA_FUNCTION_NAME
+            Value: !Ref ProjectName
+      TimeoutInMinutes: 15
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: PUSH
+            - Type: HEAD_REF
+              Pattern: !Sub ^refs/heads/${GitHubBranch}$
 
 Outputs:
-  LambdaFunctionName:
-    Description: Lambda function name
-    Value: !Ref LambdaFunction
-
-  ApiEndpoint:
-    Description: API Gateway endpoint URL
-    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod/recommend
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !If [ShouldDeployLambda, !GetAtt LambdaFunction.Arn, "Not deployed"]
+  ApiGatewayId:
+    Description: "API Gateway RestApi ID"
+    Value: !If [ShouldDeployLambda, !Ref ApiGatewayRestApi, "Not deployed"]
+  EcrRepositoryUri:
+    Description: "ECR repository URI"
+    Value: !GetAtt ECRRepository.RepositoryUri
+  CodeBuildProjectName:
+    Description: "CodeBuild project name"
+    Value: !Ref CodeBuildProject
