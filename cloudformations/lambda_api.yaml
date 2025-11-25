@@ -232,6 +232,8 @@ Resources:
             Value: !GetAtt ECRRepository.RepositoryUri
           - Name: LAMBDA_FUNCTION_NAME
             Value: !Ref ProjectName
+          - Name: IMAGE_REPO_NAME
+            Value: !Ref ECRRepository
       TimeoutInMinutes: 15
       Triggers:
         Webhook: true

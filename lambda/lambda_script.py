@@ -8,7 +8,7 @@ ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
 
 def lambda_handler(event, context):
     try:
-        # Extract the JSON body (API Gateway proxy)
+        # Extract the JSON body (API Gateway proxy).
         if "body" in event:
             payload = json.loads(event["body"])
         else:
