@@ -1,6 +1,7 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   Deploys a Docker-based Lambda from ECR with API Gateway and CodeBuild linked to GitHub.
+  Updated to REGIONAL API + deployment stage for public accessibility.
 
 Parameters:
   ProjectName:
@@ -65,17 +66,35 @@ Resources:
   LambdaExecutionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${ProjectName}-Lambda-Role
+      RoleName: !Sub "${ProjectName}-lambda-exec-role"
       AssumeRolePolicyDocument:
-        Version: '2012-10-17'
+        Version: "2012-10-17"
         Statement:
           - Effect: Allow
             Principal:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+
+      Policies:
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+        - PolicyName: InvokeSageMakerEndpoint   # 👈 Add this block
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: arn:aws:sagemaker:us-east-1:402672629468:endpoint/online-retail-xgb-serverless
 
   CodeBuildExecutionRole:
     Type: AWS::IAM::Role
@@ -99,6 +118,7 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${ProjectName}:*"
+
               - Effect: Allow
                 Action:
                   - ecr:GetAuthorizationToken
@@ -107,8 +127,8 @@ Resources:
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
-                  - ecr:CreateRepository
-                Resource: "*"   # Or restrict to !GetAtt ECRRepository.Arn
+                Resource: "*"
+
               - Effect: Allow
                 Action:
                   - lambda:UpdateFunctionCode
@@ -126,16 +146,12 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 300
       MemorySize: 512
-      VpcConfig:
-        SecurityGroupIds:
-          - !Ref LambdaSecurityGroup
-        SubnetIds:
-          - !Ref PrivateSubnetId
       Code:
         ImageUri: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ProjectName}:latest
 
+
   #################################################
-  # API Gateway (Conditional)
+  # API Gateway (REGIONAL)
   #################################################
   ApiGatewayRestApi:
     Type: AWS::ApiGateway::RestApi
@@ -144,7 +160,7 @@ Resources:
       Name: !Sub ${ProjectName}-api
       EndpointConfiguration:
         Types:
-          - PRIVATE
+          - REGIONAL
 
   ApiGatewayResource:
     Type: AWS::ApiGateway::Resource
@@ -167,6 +183,18 @@ Resources:
         IntegrationHttpMethod: POST
         Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunction.Arn}/invocations
 
+  #################################################
+  # Deployment + Stage (REQUIRED for endpoint)
+  #################################################
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    Condition: ShouldDeployLambda
+    DependsOn:
+      - ApiGatewayMethod
+    Properties:
+      RestApiId: !Ref ApiGatewayRestApi
+      StageName: prod
+
   LambdaApiInvokePermission:
     Type: AWS::Lambda::Permission
     Condition: ShouldDeployLambda
@@ -174,7 +202,7 @@ Resources:
       FunctionName: !Ref LambdaFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/POST/next-best-product
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/prod/POST/next-best-product
 
   #################################################
   # CodeBuild linked to GitHub
@@ -200,8 +228,8 @@ Resources:
             Value: !Ref AWS::AccountId
           - Name: AWS_DEFAULT_REGION
             Value: !Ref AWS::Region
-          - Name: IMAGE_REPO_NAME
-            Value: !Ref ECRRepository
+          - Name: IMAGE_REPO_URI
+            Value: !GetAtt ECRRepository.RepositoryUri
           - Name: LAMBDA_FUNCTION_NAME
             Value: !Ref ProjectName
       TimeoutInMinutes: 15
@@ -217,12 +245,18 @@ Outputs:
   LambdaFunctionArn:
     Description: "ARN of the Lambda function"
     Value: !If [ShouldDeployLambda, !GetAtt LambdaFunction.Arn, "Not deployed"]
-  ApiGatewayId:
-    Description: "API Gateway RestApi ID"
-    Value: !If [ShouldDeployLambda, !Ref ApiGatewayRestApi, "Not deployed"]
+
+  ApiGatewayInvokeURL:
+    Description: "Invoke URL of the API Gateway"
+    Value: !If
+      - ShouldDeployLambda
+      - !Sub https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/next-best-product
+      - "Not deployed"
+
   EcrRepositoryUri:
     Description: "ECR repository URI"
     Value: !GetAtt ECRRepository.RepositoryUri
+
   CodeBuildProjectName:
     Description: "CodeBuild project name"
     Value: !Ref CodeBuildProject

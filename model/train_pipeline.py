@@ -27,13 +27,17 @@ from sagemaker import Session
 from sagemaker.estimator import Estimator
 from sagemaker import image_uris
 from sklearn.model_selection import train_test_split
+from sagemaker.xgboost.model import XGBoostModel
+from sagemaker.serverless import ServerlessInferenceConfig
+from sagemaker.inputs import TrainingInput
+
 
 # ----------------------- CONFIG -----------------------
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 S3_BUCKET = "tdr-artifacts"
 S3_KEY = "tmp_files/charlaPUC/onlineRetail.xlsx"
 
-LOCAL_DATA_DIR = "../data"
+LOCAL_DATA_DIR = "./data"
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
 LOCAL_FILE = os.path.join(LOCAL_DATA_DIR, "onlineRetail.xlsx")
@@ -48,20 +52,61 @@ s3.download_file(S3_BUCKET, S3_KEY, LOCAL_FILE)
 print("File downloaded to:", LOCAL_FILE)
 
 
-INSTANCE_TYPE = "ml.m3.medium"
+S3_PREFIX = "next-best-product"
+
+# ===== XGBoost Training Configuration (Ranking) =====
+INSTANCE_TYPE = "ml.m5.xlarge"
 INSTANCE_COUNT = 1
-MAX_RUN = 3600 * 2
-XGBOOST_FRAMEWORK_VERSION = "1.5-1"
+MAX_RUN = 7200
+XGBOOST_FRAMEWORK_VERSION = "1.7-1"
+
 HYPERPARAMS = {
-"objective": "binary:logistic",
-"num_round": 200,
-"eta": 0.1,
-"max_depth": 6,
-"subsample": 0.8,
-"verbosity": 1,
+    "objective": "rank:pairwise",
+    "eval_metric": "ndcg",
+    "num_round": 200,
+    "eta": 0.2,
+    "max_depth": 6,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "min_child_weight": 1,
 }
 
 os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
+
+def prepare_and_upload_s3(sagemaker_session, df_features, bucket, prefix):
+    """
+    Prepare train.csv and validation.csv from final df_features and upload to S3.
+    """
+
+    # Remove ID columns only from training input (NOT from df – IDs needed later)
+    cols = df_features.columns.tolist()
+    feature_cols = [c for c in cols if c not in ["customer_id", "product_id", "label"]]
+
+    # Prepare final CSV structure
+    full_df = df_features[["customer_id", "product_id"] + feature_cols + ["label"]]
+
+    # Split
+    train_df, val_df = train_test_split(full_df, test_size=0.2, random_state=42)
+
+    # Local save
+    local_train = "train.csv"
+    local_val = "validation.csv"
+
+    train_df.to_csv(local_train, index=False, header=True)
+    val_df.to_csv(local_val, index=False, header=True)
+
+    # Upload
+    train_s3_path = f"s3://{bucket}/{prefix}/train/train.csv"
+    val_s3_path = f"s3://{bucket}/{prefix}/validation/validation.csv"
+
+    sagemaker_session.upload_data(local_train, bucket=bucket, key_prefix=f"{prefix}/train")
+    sagemaker_session.upload_data(local_val, bucket=bucket, key_prefix=f"{prefix}/validation")
+
+    print("Uploaded:")
+    print(train_s3_path)
+    print(val_s3_path)
+
+    return train_s3_path, val_s3_path
 
 
 def ensure_transactions_exists():
@@ -93,7 +138,6 @@ def ensure_transactions_exists():
                                      "CustomerID", "Country"])
     df.to_excel(TRANSACTIONS_XLSX, index=False)
     print(f"Synthetic transactions written to {TRANSACTIONS_XLSX}")
-
 
 def load_transactions_from_xlsx(path: str) -> pd.DataFrame:
     df = pd.read_excel(path)  # <-- do NOT force dtype=str
@@ -140,25 +184,30 @@ def load_transactions_from_xlsx(path: str) -> pd.DataFrame:
     return df[["customer_id", "product_id", "date", "quantity", "price"]]
 
 
-def build_features(df, holdout_days=30):
+def build_features(df, holdout_days=30, negative_ratio=3, seed=42):
     """
-    Build CUSTOMER × PRODUCT features for next-best-product prediction.
-    Output: each row is (customer_id, product_id) with RFM + product stats + label.
+    Build CUSTOMER × PRODUCT features without cartesian explosion.
+
+    - Only positive pairs + sampled negatives
+    - All indexes reset before merging (fixes ambiguity)
+    - Memory-safe even for large datasets
     """
 
     df = df.copy()
+    np.random.seed(seed)
 
-    # Proper dtypes
+    # -----------------------------
+    # dtype cleanup
+    # -----------------------------
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["quantity"] = pd.to_numeric(df["quantity"], errors="coerce").fillna(0)
     df["price"] = pd.to_numeric(df["price"], errors="coerce").fillna(0)
     df["revenue"] = df["quantity"] * df["price"]
 
-    # Drop invalid rows
     df = df.dropna(subset=["customer_id", "product_id", "date"])
 
     # -----------------------------
-    # Train / Holdout
+    # Train vs Holdout
     # -----------------------------
     max_date = df["date"].max()
     cutoff_date = max_date - pd.Timedelta(days=holdout_days)
@@ -167,146 +216,139 @@ def build_features(df, holdout_days=30):
     df_holdout = df[df["date"] > cutoff_date]
 
     # -----------------------------
-    # CUSTOMER RFM FEATURES
+    # CUSTOMER FEATURES
     # -----------------------------
-    customer_last = df_train.groupby("customer_id")["date"].max().rename("last_purchase")
-    customer_freq = df_train.groupby("customer_id")["date"].count().rename("frequency")
-    customer_monetary = df_train.groupby("customer_id")["revenue"].sum().rename("monetary")
-    customer_recency = (cutoff_date - customer_last).dt.days.rename("recency")
-    customer_unique_products = (
-        df_train.groupby("customer_id")["product_id"].nunique().rename("unique_products")
-    )
-    customer_total_qty = df_train.groupby("customer_id")["quantity"].sum().rename("total_quantity")
+    g = df_train.groupby("customer_id")
 
-    customer_features = pd.concat(
-        [
-            customer_last,
-            customer_recency,
-            customer_freq,
-            customer_monetary,
-            customer_unique_products,
-            customer_total_qty,
-        ],
-        axis=1,
-    ).fillna(0)
+    customer_features = g.agg(
+        last_purchase=("date", "max"),
+        frequency=("date", "count"),
+        monetary=("revenue", "sum"),
+        unique_products=("product_id", "nunique"),
+        total_quantity=("quantity", "sum"),
+    ).reset_index()  # FIX: ensure customer_id is a column
+
+    customer_features["recency"] = (
+        cutoff_date - customer_features["last_purchase"]
+    ).dt.days
+
     customer_features["avg_order_value"] = (
-        customer_features["monetary"] / customer_features["frequency"].replace(0, 1)
+        customer_features["monetary"] /
+        customer_features["frequency"].replace(0, 1)
     )
-    customer_features = customer_features.reset_index()
+
+    customer_features = customer_features.fillna(0)
 
     # -----------------------------
     # PRODUCT FEATURES
     # -----------------------------
-    product_popularity = (
-        df_train.groupby("product_id")["quantity"]
-        .sum()
-        .rename("product_popularity")
-        .reset_index()
-    )
-
-    product_avg_price = (
-        df_train.groupby("product_id")["price"]
-        .mean()
-        .rename("product_avg_price")
-        .reset_index()
+    product_features = (
+        df_train.groupby("product_id")
+        .agg(
+            product_popularity=("quantity", "sum"),
+            product_avg_price=("price", "mean"),
+        )
+        .reset_index()  # FIX: ensure product_id is a column
+        .fillna(0)
     )
 
     # -----------------------------
-    # CUSTOMER × PRODUCT CANDIDATES
+    # POSITIVE PAIRS
+    # -----------------------------
+    pos_pairs = (
+        df_train.groupby(["customer_id", "product_id"])
+        .size()
+        .reset_index()[["customer_id", "product_id"]]
+    )
+    pos_pairs["label"] = 1
+
+    # -----------------------------
+    # NEGATIVE SAMPLING
     # -----------------------------
     all_customers = df_train["customer_id"].unique()
     all_products = df_train["product_id"].unique()
 
-    df_pairs = (
-        pd.MultiIndex.from_product([all_customers, all_products], names=["customer_id", "product_id"])
-        .to_frame(index=False)
+    existing_pairs = set(zip(pos_pairs.customer_id, pos_pairs.product_id))
+
+    neg_samples = []
+    target_neg = len(pos_pairs) * negative_ratio
+
+    while len(neg_samples) < target_neg:
+        c = np.random.choice(all_customers)
+        p = np.random.choice(all_products)
+        if (c, p) not in existing_pairs:
+            neg_samples.append((c, p))
+            existing_pairs.add((c, p))
+
+    neg_pairs = pd.DataFrame(neg_samples, columns=["customer_id", "product_id"])
+    neg_pairs["label"] = 0
+
+    # -----------------------------
+    # Combine pairs
+    # -----------------------------
+    df_pairs = pd.concat([pos_pairs, neg_pairs], ignore_index=True)
+
+    # -----------------------------
+    # Merge features (all indexes reset)
+    # -----------------------------
+    df_features = (
+        df_pairs
+        .merge(customer_features, on="customer_id", how="left")
+        .merge(product_features, on="product_id", how="left")
+        .fillna(0)
     )
 
-    # Merge customer and product features
-    df_features = df_pairs.merge(customer_features, on="customer_id", how="left")
-    df_features = df_features.merge(product_popularity, on="product_id", how="left")
-    df_features = df_features.merge(product_avg_price, on="product_id", how="left")
-    df_features = df_features.fillna(0)
-
     # -----------------------------
-    # LABEL: Did customer buy product in the next period?
+    # HOLDOUT label (for validation)
     # -----------------------------
-    purchases_next = (
+    holdout_labels = (
         df_holdout.groupby(["customer_id", "product_id"])
         .size()
         .reset_index(name="bought")
     )
-    purchases_next["label"] = 1
-    purchases_next = purchases_next[["customer_id", "product_id", "label"]]
+    holdout_labels["holdout_label"] = 1
+    holdout_labels = holdout_labels[["customer_id", "product_id", "holdout_label"]]
 
-    df_features = df_features.merge(purchases_next, on=["customer_id", "product_id"], how="left")
-    df_features["label"] = df_features["label"].fillna(0).astype(int)
+    # FIX: ensure no index levels cause ambiguity
+    holdout_labels = holdout_labels.reset_index(drop=True)
 
-    print("Final feature matrix shape:", df_features.shape)
+    df_features = df_features.merge(
+        holdout_labels, on=["customer_id", "product_id"], how="left"
+    )
+    df_features["holdout_label"] = df_features["holdout_label"].fillna(0).astype(int)
+
+    print("Final shape:", df_features.shape)
     return df_features
 
-def prepare_and_upload_s3(sagemaker_session, df_features, bucket, prefix):
-    """
-    Prepare train.csv and validation.csv from final df_features and upload to S3.
-    """
 
-    # Remove ID columns only from training input (NOT from df – IDs needed later)
-    cols = df_features.columns.tolist()
-    feature_cols = [c for c in cols if c not in ["customer_id", "product_id", "label"]]
+def train_xgboost_sagemaker(
+    sagemaker_session,
+    role,
+    train_s3_uri,
+    val_s3_uri,
+    bucket,
+    prefix
+):
+    from sagemaker.inputs import TrainingInput
+    from sagemaker.estimator import Estimator
+    from sagemaker import image_uris
 
-    # Prepare final CSV structure
-    full_df = df_features[["customer_id", "product_id"] + feature_cols + ["label"]]
-
-    # Split
-    train_df, val_df = train_test_split(full_df, test_size=0.2, random_state=42)
-
-    # Local save
-    local_train = "train.csv"
-    local_val = "validation.csv"
-
-    train_df.to_csv(local_train, index=False, header=True)
-    val_df.to_csv(local_val, index=False, header=True)
-
-    # Upload
-    train_s3_path = f"s3://{bucket}/{prefix}/train/train.csv"
-    val_s3_path = f"s3://{bucket}/{prefix}/validation/validation.csv"
-
-    sagemaker_session.upload_data(local_train, bucket=bucket, key_prefix=f"{prefix}/train")
-    sagemaker_session.upload_data(local_val, bucket=bucket, key_prefix=f"{prefix}/validation")
-
-    print("Uploaded:")
-    print(train_s3_path)
-    print(val_s3_path)
-
-    return train_s3_path, val_s3_path
-
-def train_xgboost_sagemaker(sagemaker_session, role, train_s3_uri, val_s3_uri, bucket, prefix):
-    print("▶ Starting XGBoost (Next Best Product) training job...")
-
-    container = sagemaker.image_uris.retrieve(
+    # Built-in XGBoost container image
+    container = image_uris.retrieve(
         framework="xgboost",
+        version=XGBOOST_FRAMEWORK_VERSION,
         region=sagemaker_session.boto_region_name,
-        version="1.7-1"
     )
 
     xgb = Estimator(
         image_uri=container,
         role=role,
-        instance_count=1,
-        instance_type="ml.m5.large",
-        output_path=f"s3://{bucket}/{prefix}/model_output",
-        sagemaker_session=sagemaker_session
-    )
-
-    # CLASSIFICATION
-    xgb.set_hyperparameters(
-        objective="binary:logistic",
-        eval_metric="auc",
-        num_round=200,
-        eta=0.2,
-        max_depth=8,
-        subsample=0.8,
-        colsample_bytree=0.8
+        instance_count=INSTANCE_COUNT,
+        instance_type=INSTANCE_TYPE,
+        hyperparameters=HYPERPARAMS,
+        max_run=MAX_RUN,
+        output_path=f"s3://{bucket}/{prefix}/output",
+        sagemaker_session=sagemaker_session,
     )
 
     train_input = TrainingInput(train_s3_uri, content_type="text/csv")
@@ -316,7 +358,6 @@ def train_xgboost_sagemaker(sagemaker_session, role, train_s3_uri, val_s3_uri, b
 
     print("✔ Training completed")
     return xgb
-
 
 
 TRAIN_SCRIPT_CONTENT = r"""
@@ -376,15 +417,17 @@ model = xgb.train(params, dtrain, num_boost_round=args.num_round, evals=watchlis
 
 model_path = '/opt/ml/model/xgboost-model'
 model.save_model(model_path)
-print('model saved to', model_path)
+print('Model saved to', model_path)
 """
 
 ensure_transactions_exists()
 transactions = load_transactions_from_xlsx(TRANSACTIONS_XLSX)
 transactions.head()
+
 print('Building features...')
 df_features = build_features(transactions, holdout_days=30)
 print('Features shape:', df_features.shape)
+
 
 sagemaker_session = sagemaker.Session()
 try:
@@ -410,3 +453,52 @@ xgboost_model = train_xgboost_sagemaker(
     bucket=S3_BUCKET,
     prefix=S3_PREFIX
 )
+
+sm = boto3.client("sagemaker")
+
+endpoint_name = "online-retail-xgb-serverless"
+
+# 1. Delete endpoint if exists
+try:
+    sm.delete_endpoint(EndpointName=endpoint_name)
+    print("Deleted endpoint:", endpoint_name)
+except sm.exceptions.ClientError as e:
+    if "Could not find endpoint" in str(e):
+        print("Endpoint does not exist, OK")
+    else:
+        raise e
+
+# 2. Delete endpoint config
+try:
+    sm.delete_endpoint_config(EndpointConfigName=endpoint_name)
+    print("Deleted endpoint config:", endpoint_name)
+except sm.exceptions.ClientError as e:
+    if "Could not find endpoint configuration" in str(e):
+        print("Endpoint config does not exist, OK")
+    else:
+        raise e
+
+model_artifact = xgboost_model.model_data
+print("Model artifact:", model_artifact)
+
+# Force SageMaker to use your bucket
+serverless_model = XGBoostModel(
+    model_data=model_artifact,
+    role=role,
+    framework_version="1.7-1",
+    sagemaker_session=sagemaker_session
+)
+
+serverless_model.bucket = "tdr-artifacts"  # ← FIX
+
+serverless_config = ServerlessInferenceConfig(
+    memory_size_in_mb=2048,
+    max_concurrency=5
+)
+
+predictor = serverless_model.deploy(
+    endpoint_name="online-retail-xgb-serverless",
+    serverless_inference_config=serverless_config
+)
+
+print("✔ Serverless endpoint deployed:", predictor.endpoint_name)
