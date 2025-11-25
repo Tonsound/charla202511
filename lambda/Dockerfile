@@ -1,11 +1,14 @@
 FROM public.ecr.aws/lambda/python:3.11
 
-# Copy function code
+# Install build essentials for compiling packages
+RUN yum install -y gcc gcc-c++ make && yum clean all
+
+# Copy your code
 COPY lambda_script.py ${LAMBDA_TASK_ROOT}/
 COPY requirements.txt ${LAMBDA_TASK_ROOT}/
 
-# Install the specified packages
-RUN pip install -r requirements.txt
+# Install dependencies
+RUN pip install --upgrade pip
+RUN pip install -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
-# Command can be your handler
 CMD ["lambda_script.lambda_handler"]
