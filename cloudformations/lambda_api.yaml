@@ -107,7 +107,8 @@ Resources:
                   - ecr:UploadLayerPart
                   - ecr:CompleteLayerUpload
                   - ecr:PutImage
-                Resource: !GetAtt ECRRepository.Arn
+                  - ecr:CreateRepository
+                Resource: "*"   # Or restrict to !GetAtt ECRRepository.Arn
               - Effect: Allow
                 Action:
                   - lambda:UpdateFunctionCode
