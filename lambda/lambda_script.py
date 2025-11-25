@@ -3,7 +3,7 @@ import os
 import pandas as pd
 import json
 
-# SageMaker runtime client
+# SageMaker runtime client.
 runtime = boto3.client('sagemaker-runtime')
 
 # Endpoint name (already deployed)
