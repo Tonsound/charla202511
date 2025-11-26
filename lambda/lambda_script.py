@@ -60,16 +60,10 @@ def lambda_handler(event, context):
             Body=csv_payload
         )
         result = sm_response['Body'].read().decode('utf-8').strip()
+        print(result)
         recommended_product_id = result or sku  # fallback
         recommended_product_name = PRODUCT_NAMES.get(recommended_product_id, "Recommended Product")
 
-        # --- Bedrock: generate marketing message in Spanish ---
-        prompt = (
-            f"Eres un asistente de marketing. Un cliente está interesado en el producto SKU {sku}. "
-            f"Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo, "
-            "animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL, "
-            "pero el nombre del producto debe permanecer en inglés."
-        )
 
         prompt = f"""
                 Eres un asistente de marketing. Un cliente esta comprando el producto SKU {sku}.
@@ -88,6 +82,7 @@ def lambda_handler(event, context):
         response_json = json.loads(response_body)
         print(response_json)
         marketing_text = response_json['generation']
+        print(marketing_text)
         return {
             "statusCode": 200,
             "body": json.dumps({
