@@ -11,9 +11,7 @@ API_URL = "https://1g3vuy92cc.execute-api.us-east-1.amazonaws.com/prod/next-best
 # 2. Example test payload (matches your feature schema)
 # -------------------------------------------------------
 payload = {
-    "customer_id": 12345,
-    "product_id": "85123A",
-    "last_purchase": "2024-10-01T12:30:00",
+    "last_purchase": 12,  # days since last purchase
     "frequency": 18,
     "monetary": 240.75,
     "unique_products": 7,
