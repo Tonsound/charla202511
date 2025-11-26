@@ -108,7 +108,7 @@ def lambda_handler(event, context):
         - Ser breve (2–3 líneas máximo).
         - Incluir únicamente la recomendación, sin explicaciones adicionales ni texto extra.
 
-        Entrega SOLO la recomendación.
+        Entrega SOLO la recomendación. Omite el razonamiento y cualquier otro comentario que no sea la recomendacion.
         """
 
         native_request = {
@@ -130,6 +130,7 @@ def lambda_handler(event, context):
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
 
         marketing_message = br_body["choices"][0]["message"]["content"].strip()
+        print(marketing_message)
 
         # Final response
         return {
