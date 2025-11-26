@@ -68,18 +68,21 @@ def lambda_handler(event, context):
 
         # --- Bedrock: generate marketing message in Spanish (fixed) ---
         prompt = f"""
-Eres un asistente de marketing. Un cliente está interesado en el producto SKU {sku}.
-Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo,
-animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL,
-pero el nombre del producto debe permanecer en inglés.
-"""
+        Eres un asistente de marketing. Un cliente está interesado en el producto SKU {sku}.
+        Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo,
+        animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL,
+        pero el nombre del producto debe permanecer en inglés.
+        """
         bedrock_response = bedrock.invoke_model(
             modelId=BEDROCK_MODEL_ID,
             contentType='application/json',
             body=json.dumps({"prompt": prompt})
         )
-
-        marketing_text = json.loads(bedrock_response['body'].read().decode('utf-8'))['completion']
+        print(bedrock_response)
+        # Correct parsing of Llama3 response
+        response_body = bedrock_response['body'].read().decode('utf-8')
+        response_json = json.loads(response_body)
+        marketing_text = response_json['content'][0]['text']
 
         return {
             "statusCode": 200,
