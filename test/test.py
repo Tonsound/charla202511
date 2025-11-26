@@ -1,52 +1,23 @@
-import json
 import requests
+import json
 
-# -------------------------------------------------------
-# 1. INSERT YOUR API GATEWAY INVOKE URL HERE
-# -------------------------------------------------------
+# API Gateway URL
 API_URL = "https://1g3vuy92cc.execute-api.us-east-1.amazonaws.com/prod/next-best-product"
 
+# Test SKUs to check recommendations
+test_skus = ["71053"]
 
-# -------------------------------------------------------
-# 2. Example test payload (matches your feature schema)
-# -------------------------------------------------------
-payload = {
-    "last_purchase": 12,  # days since last purchase
-    "frequency": 18,
-    "monetary": 240.75,
-    "unique_products": 7,
-    "total_quantity": 29,
-    "recency": 12,
-    "avg_order_value": 13.37,
-    "product_popularity": 410,
-    "product_avg_price": 2.55
-}
-
-
-# -------------------------------------------------------
-# 3. Send request
-# -------------------------------------------------------
-def test_api():
-    print("➡️ Sending request to API Gateway...")
-    print("POST", API_URL)
-    print("Payload:\n", json.dumps(payload, indent=2))
-
-    response = requests.post(
-        API_URL,
-        data=json.dumps(payload),
-        headers={"Content-Type": "application/json"}
-    )
-
-    print("\n⬅️ Response status:", response.status_code)
-
+for sku in test_skus:
+    payload = {"sku": sku}
     try:
-        body = response.json()
-        print("\nResponse JSON:")
-        print(json.dumps(body, indent=2))
-    except Exception:
-        print("\nRaw response:")
-        print(response.text)
-
-
-if __name__ == "__main__":
-    test_api()
+        response = requests.post(API_URL, json=payload)
+        if response.status_code == 200:
+            data = response.json()
+            print(f"\nInput SKU: {data['input_sku']}")
+            print(f"Recommended product ID: {data['recommended_product_id']}")
+            print(f"Recommended product name: {data['recommended_product_name']}")
+            print(f"Score: {data['score']:.4f}")
+        else:
+            print(f"Error {response.status_code}: {response.text}")
+    except Exception as e:
+        print(f"Exception for SKU {sku}: {e}")
