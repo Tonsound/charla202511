@@ -13,6 +13,7 @@ for sku in test_skus:
         response = requests.post(API_URL, json=payload)
         if response.status_code == 200:
             data = response.json()
+            print(data)
             print(f"\nInput SKU: {data['input_sku']}")
             print(f"Recommended product ID: {data['recommended_product_id']}")
             print(f"Recommended product name: {data['recommended_product_name']}")
