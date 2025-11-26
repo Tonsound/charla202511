@@ -98,17 +98,25 @@ def lambda_handler(event, context):
         # 🟦 BEDROCK GPT-OSS-20B-1:0  (CHAT COMPLETION FORMAT)
         # ---------------------------------------------------
         prompt_message = f"""
-        Eres un asistente de marketing. Un cliente está comprando el producto con SKU {input_sku}. 
-        Recomienda el producto '{best_name}' como el siguiente mejor artículo para complementar su compra. 
+        Eres un experto asistente de marketing.
 
-        El mensaje debe:
-        - Ser persuasivo, natural y amigable.
-        - Estar completamente en ESPAÑOL.
-        - Mantener el nombre del producto exactamente en inglés.
-        - Ser breve (2–3 líneas máximo).
-        - Incluir únicamente la recomendación, sin explicaciones adicionales ni texto extra.
+        Tarea:
+        Un cliente está comprando el producto con SKU {input_sku}.
+        Tu objetivo es recomendar el producto '{best_name}' como el mejor complemento para su compra.
 
-        Entrega SOLO la recomendación. Omite el razonamiento y cualquier otro comentario que no sea la recomendacion.
+        Reglas estrictas:
+        - Responde SOLO con la recomendación final, en un único mensaje.
+        - No incluyas pensamiento oculto, razonamiento, análisis, ni etiquetas como <reasoning>.
+        - No expliques nada sobre por qué haces la recomendación.
+        - NO describas la tarea.
+        - El mensaje debe estar 100% en ESPAÑOL.
+        - El nombre del producto debe mantenerse EXACTAMENTE en inglés.
+        - Debe sonar natural, breve, persuasivo y amigable.
+
+        Ejemplo del estilo esperado (NO lo repitas literalmente):
+        "¡Aprovecha y lleva también un Wireless Mouse para complementar perfectamente tu compra!"
+
+        Ahora genera ÚNICAMENTE la recomendación final.
         """
 
         native_request = {
