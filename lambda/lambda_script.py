@@ -112,6 +112,7 @@ def lambda_handler(event, context):
         - El mensaje debe estar 100% en ESPAÑOL.
         - El nombre del producto debe mantenerse EXACTAMENTE en inglés.
         - Debe sonar natural, breve, persuasivo y amigable.
+        - El mensaje debe tener alrededor de 100 palabras
 
         Ejemplo del estilo esperado (NO lo repitas literalmente):
         "¡Aprovecha y lleva también un Wireless Mouse para complementar perfectamente tu compra!"
