@@ -7,7 +7,7 @@ import random
 runtime = boto3.client('sagemaker-runtime')
 bedrock = boto3.client('bedrock-runtime')
 
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "deepseek.r1-v1:0")
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "amazon.nova-micro-v1:0")
 BEDROCK_MODEL_ID = "openai.gpt-oss-20b-1:0"
 
 # Product names (unchanged)
