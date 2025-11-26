@@ -73,17 +73,18 @@ def lambda_handler(event, context):
         animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL,
         pero el nombre del producto debe permanecer en inglés.
         """
-
         bedrock_response = bedrock.invoke_model(
             modelId=BEDROCK_MODEL_ID,
             contentType='application/json',
             body=json.dumps({"prompt": prompt})
         )
-
+        print(bedrock_response)
+        # Correct parsing of Llama3 response
         response_body = bedrock_response['body'].read().decode('utf-8')
-        response_json = json.loads(response_body)
-        marketing_text = response_json['generation']
+        print(response_body)
 
+        # For Llama 3 instruct model, the text is under response_json["results"][0]["output_text"]
+        marketing_text = response_body["generation"]
         return {
             "statusCode": 200,
             "body": json.dumps({
