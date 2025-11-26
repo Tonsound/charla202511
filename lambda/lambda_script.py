@@ -7,8 +7,8 @@ import random
 runtime = boto3.client('sagemaker-runtime')
 bedrock = boto3.client('bedrock-runtime')
 
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "amazon.nova-micro-v1:0")
-BEDROCK_MODEL_ID = "openai.gpt-oss-20b-1:0"
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
+BEDROCK_MODEL_ID = "amazon.nova-micro-v1:0"
 
 # Product names (unchanged)
 product_names = {
@@ -112,8 +112,8 @@ def lambda_handler(event, context):
         - El mensaje debe estar 100% en ESPAÑOL.
         - El nombre del producto debe mantenerse EXACTAMENTE en inglés.
         - Debe sonar natural, breve, persuasivo y amigable.
-        - El mensaje debe 3 a 4 lineas
-        - ofrece un 10% de descuento en el producto
+        - El mensaje debe aproximadamente 3 lineas
+        - Ofrece un 10% con el cupon "MICOMPRA"
 
         Ejemplo del estilo esperado (NO lo repitas literalmente):
         "¡Aprovecha y lleva también un Wireless Mouse para complementar perfectamente tu compra!"
@@ -124,7 +124,7 @@ def lambda_handler(event, context):
         native_request = {
             "messages": [
                 {"role": "system",
-                 "content": "Eres un experto en marketing que escribe mensajes breves, persuasivos y en español."},
+                 "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
                 {"role": "user", "content": prompt_message}
             ],
             "max_completion_tokens": 120,
@@ -136,15 +136,10 @@ def lambda_handler(event, context):
             modelId=BEDROCK_MODEL_ID,
             body=json.dumps(native_request)
         )
-        #comment
-
+        print(br_response)
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
-        print(br_body)
 
-        raw_output = br_body["choices"][0]["message"]["content"]
-
-        # Get ONLY the answer block
-        marketing_message = extract_deepseek_answer(raw_output)
+        marketing_message = br_body["choices"][0]["message"]["content"].strip()
         print(marketing_message)
 
         # Final response
