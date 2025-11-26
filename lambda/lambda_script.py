@@ -7,8 +7,9 @@ import json
 runtime = boto3.client('sagemaker-runtime')
 bedrock = boto3.client('bedrock-runtime')  # AWS Bedrock
 
+# Environment variables
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "meta.llama3-8b-instruct-v1:0")  # Example
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "meta.llama3-8b-instruct-v1:0")
 
 # Fake product names mapping
 PRODUCT_NAMES = {
@@ -32,17 +33,13 @@ PRODUCT_NAMES = {
 
 def lambda_handler(event, context):
     try:
-        # Extract payload
-        if "body" in event:
-            payload = json.loads(event["body"])
-        else:
-            payload = event
-
+        # Extract payload from API Gateway or direct test
+        payload = json.loads(event.get("body", "{}")) if "body" in event else event
         sku = payload.get("sku")
         if not sku:
             return {"statusCode": 400, "body": json.dumps({"error": "Missing 'sku' in request"})}
 
-        # --- SageMaker: get next-best-product ---
+        # --- SageMaker: generate dummy features and get next-best-product ---
         df = pd.DataFrame([{
             "customer_id": 12345,
             "product_id": sku,
@@ -62,23 +59,26 @@ def lambda_handler(event, context):
             ContentType='text/csv',
             Body=csv_payload
         )
-        result = sm_response['Body'].read().decode('utf-8')
-        recommended_product_id = result.strip()  # assuming endpoint returns a single product_id
+        result = sm_response['Body'].read().decode('utf-8').strip()
+        recommended_product_id = result or sku  # fallback
         recommended_product_name = PRODUCT_NAMES.get(recommended_product_id, "Recommended Product")
 
         # --- Bedrock: generate marketing message in Spanish ---
-        prompt = f"""
-        Eres un asistente de marketing. Un cliente está interesado en el producto SKU {sku}.
-        Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo,
-        animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL,
-        pero el nombre del producto debe permanecer en inglés.
-        """
+        prompt = (
+            f"Eres un asistente de marketing. Un cliente está interesado en el producto SKU {sku}. "
+            f"Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo, "
+            "animando al cliente a considerarlo para comprarlo. El mensaje debe estar en ESPAÑOL, "
+            "pero el nombre del producto debe permanecer en inglés."
+        )
+
         bedrock_response = bedrock.invoke_model(
             modelId=BEDROCK_MODEL_ID,
             contentType='application/json',
-            body=json.dumps({"inputText": prompt})
+            body=json.dumps({"prompt": prompt})
         )
-        marketing_text = json.loads(bedrock_response['body'].read().decode('utf-8'))['outputText']
+
+        # Extract marketing text
+        marketing_text = json.loads(bedrock_response['body'].read().decode('utf-8')).get("completion", "")
 
         return {
             "statusCode": 200,
