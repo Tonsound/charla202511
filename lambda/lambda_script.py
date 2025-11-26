@@ -7,7 +7,7 @@ import random
 runtime = boto3.client('sagemaker-runtime')
 bedrock = boto3.client('bedrock-runtime')
 
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "deepseek.r1-v1:0")
 BEDROCK_MODEL_ID = "openai.gpt-oss-20b-1:0"
 
 # Product names (unchanged)
@@ -124,7 +124,7 @@ def lambda_handler(event, context):
         native_request = {
             "messages": [
                 {"role": "system",
-                 "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
+                 "content": "Eres un experto en marketing que escribe mensajes breves, persuasivos y en español."},
                 {"role": "user", "content": prompt_message}
             ],
             "max_completion_tokens": 120,
@@ -138,8 +138,12 @@ def lambda_handler(event, context):
         )
 
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
+        print(br_body)
 
-        marketing_message = br_body["choices"][0]["message"]["content"].strip()
+        raw_output = br_body["choices"][0]["message"]["content"]
+
+        # Get ONLY the answer block
+        marketing_message = extract_deepseek_answer(raw_output)
         print(marketing_message)
 
         # Final response
