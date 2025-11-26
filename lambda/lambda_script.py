@@ -81,9 +81,11 @@ def lambda_handler(event, context):
         print(bedrock_response)
         # Correct parsing of Llama3 response
         response_body = bedrock_response['body'].read().decode('utf-8')
+        print(response_body)
         response_json = json.loads(response_body)
-        marketing_text = response_json['content'][0]['text']
 
+        # For Llama 3 instruct model, the text is under response_json["results"][0]["output_text"]
+        marketing_text = response_json["results"][0]["output_text"]
         return {
             "statusCode": 200,
             "body": json.dumps({
