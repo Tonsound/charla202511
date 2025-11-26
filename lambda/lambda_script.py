@@ -124,15 +124,15 @@ def lambda_handler(event, context):
         native_request = {
             "messages": [
                 {
-                    "role": "system",
-                    "content": [
-                        {"text": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."}
-                    ]
-                },
-                {
                     "role": "user",
                     "content": [
-                        {"text": prompt_message}
+                        {
+                            "text": (
+                                "Eres un experto en marketing que escribe mensajes persuasivos, "
+                                "muy cortos, sin razonamiento y sin explicación.\n\n"
+                                f"Usuario: {prompt_message}"
+                            )
+                        }
                     ]
                 }
             ],
@@ -149,8 +149,8 @@ def lambda_handler(event, context):
         )
         print(br_response)
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
+        marketing_message = br_body["output"]["message"]["content"][0]["text"].strip()
 
-        marketing_message = br_body["choices"][0]["message"]["content"].strip()
         print(marketing_message)
 
         # Final response
