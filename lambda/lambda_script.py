@@ -136,6 +136,7 @@ def lambda_handler(event, context):
             modelId=BEDROCK_MODEL_ID,
             body=json.dumps(native_request)
         )
+        #comment
 
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
         print(br_body)
