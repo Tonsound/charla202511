@@ -123,13 +123,24 @@ def lambda_handler(event, context):
 
         native_request = {
             "messages": [
-                {"role": "system",
-                 "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
-                {"role": "user", "content": prompt_message}
+                {
+                    "role": "system",
+                    "content": [
+                        {"text": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."}
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"text": prompt_message}
+                    ]
+                }
             ],
-            "max_completion_tokens": 120,
-            "temperature": 0.7,
-            "top_p": 0.9
+            "inferenceConfig": {
+                "temperature": 0.7,
+                "maxTokens": 150,
+                "topP": 0.9
+            }
         }
 
         br_response = bedrock.invoke_model(
