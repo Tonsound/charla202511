@@ -107,18 +107,20 @@ def lambda_handler(event, context):
         Reglas estrictas:
         - Responde SOLO con la recomendación final, en un único mensaje.
         - No incluyas pensamiento oculto, razonamiento, análisis, ni etiquetas como <reasoning>.
-        - No expliques nada sobre por qué haces la recomendación.
-        - NO describas la tarea.
+        - No expliques nada sobre la tarea ni tus pasos.
         - El mensaje debe estar 100% en ESPAÑOL.
-        - El nombre del producto debe mantenerse EXACTAMENTE en inglés.
-        - Debe sonar natural, breve, persuasivo y amigable.
-        - El mensaje debe aproximadamente 3 lineas
-        - Ofrece un 10% con el cupon "MICOMPRA"
+        - Mantén el nombre del producto EXACTAMENTE en inglés.
+        - El mensaje debe sonar natural, amigable, persuasivo y profesional.
+        - El texto debe tener entre 3 y 5 líneas.
+        - Destaca claramente un 10% de descuento usando el cupón "MICOMPRA".
+        - Mantén un tono cálido, cercano y orientado a motivar la compra conjunta.
 
-        Ejemplo del estilo esperado (NO lo repitas literalmente):
-        "¡Aprovecha y lleva también un Wireless Mouse para complementar perfectamente tu compra!"
+        Ejemplo del estilo esperado (NO lo repitas):
+        "Este accesorio es el complemento perfecto para mejorar tu experiencia, ya que agrega comodidad y utilidad adicional a tu compra. 
+        Te permitirá aprovechar aún más tu dispositivo con mayor practicidad. 
+        Además, hoy puedes llevarlo con un 10% de descuento usando el cupón 'MICOMPRA'."
 
-        Ahora genera ÚNICAMENTE la recomendación final.
+        Ahora genera ÚNICAMENTE la recomendación final y nada más.
         """
 
         native_request = {

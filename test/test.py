@@ -18,7 +18,7 @@ for sku in test_skus:
             print(f"Recommended product ID: {data['recommended_product_id']}")
             print(f"Recommended product name: {data['recommended_product_name']}")
             print(f"Score: {data['score']:.4f}")
-            print(f"Marketing Message: {data['marketing_message'].split('.</reasoning>')[1]}")
+            print(f"Marketing Message: {data['marketing_message']}")
         else:
             print(f"Error {response.status_code}: {response.text}")
     except Exception as e:
