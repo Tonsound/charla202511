@@ -87,7 +87,7 @@ Resources:
                   - logs:PutLogEvents
                 Resource: "*"
 
-        - PolicyName: InvokeSageMakerEndpoint   # 👈 Add this block
+        - PolicyName: InvokeSageMakerEndpoint
           PolicyDocument:
             Version: "2012-10-17"
             Statement:
@@ -95,6 +95,16 @@ Resources:
                 Action:
                   - sagemaker:InvokeEndpoint
                 Resource: arn:aws:sagemaker:us-east-1:402672629468:endpoint/online-retail-xgb-serverless
+
+        - PolicyName: InvokeBedrockModels
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: "*"
+
 
   CodeBuildExecutionRole:
     Type: AWS::IAM::Role

@@ -8,7 +8,7 @@ runtime = boto3.client('sagemaker-runtime')
 bedrock = boto3.client('bedrock-runtime')  # AWS Bedrock
 
 ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
-BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-v2")  # Example
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "meta.llama3-8b-instruct-v1:0")  # Example
 
 # Fake product names mapping
 PRODUCT_NAMES = {
