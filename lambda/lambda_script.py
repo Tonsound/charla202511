@@ -97,9 +97,9 @@ def lambda_handler(event, context):
         # ---------------------------------------------------
         # 🟦 BEDROCK GPT-OSS-20B-1:0  (CHAT COMPLETION FORMAT)
         # ---------------------------------------------------
-        prompt = f"""
-        Eres un asistente de marketing. Un cliente está comprando el producto con SKU {sku}. 
-        Recomienda el producto '{recommended_product_name}' como el siguiente mejor artículo para complementar su compra. 
+        prompt_message = f"""
+        Eres un asistente de marketing. Un cliente está comprando el producto con SKU {input_sku}. 
+        Recomienda el producto '{best_name}' como el siguiente mejor artículo para complementar su compra. 
 
         El mensaje debe:
         - Ser persuasivo, natural y amigable.
@@ -113,7 +113,8 @@ def lambda_handler(event, context):
 
         native_request = {
             "messages": [
-                {"role": "system", "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
+                {"role": "system",
+                 "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
                 {"role": "user", "content": prompt_message}
             ],
             "max_completion_tokens": 120,
@@ -128,7 +129,6 @@ def lambda_handler(event, context):
 
         br_body = json.loads(br_response["body"].read().decode("utf-8"))
 
-        # Extract correctly using OpenAI schema
         marketing_message = br_body["choices"][0]["message"]["content"].strip()
 
         # Final response
