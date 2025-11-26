@@ -69,7 +69,7 @@ def lambda_handler(event, context):
                 Eres un asistente de marketing. Un cliente esta comprando el producto SKU {sku}.
                 Recomienda el siguiente mejor producto ({recommended_product_name}) en un tono amigable y persuasivo,
                 animando al cliente a considerarlo para comprarlo juntos. El mensaje debe estar en ESPAÑOL,
-                pero el nombre del producto debe permanecer en inglés.
+                pero el nombre del producto debe permanecer en inglés. Devuelve solo al recomendación y nada mas que la recomendación.
                 """
 
         bedrock_response = bedrock.invoke_model(
