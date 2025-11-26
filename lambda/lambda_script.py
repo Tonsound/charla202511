@@ -5,9 +5,12 @@ import json
 import random
 
 runtime = boto3.client('sagemaker-runtime')
-ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
+bedrock = boto3.client('bedrock-runtime')
 
-# Fake product names
+ENDPOINT_NAME = os.environ.get("ENDPOINT_NAME", "online-retail-xgb-serverless")
+BEDROCK_MODEL_ID = "openai.gpt-oss-20b-1:0"
+
+# Product names (unchanged)
 product_names = {
     "71053": "Wireless Mouse",
     "22752": "USB-C Hub",
@@ -27,10 +30,8 @@ product_names = {
     "21777": "Tablet Case"
 }
 
-# Candidate products (numeric IDs only)
 candidate_products = list(product_names.keys())
 
-# Generate dummy features for a product
 def generate_dummy_features(product_id):
     return {
         "customer_id": random.randint(10000, 20000),
@@ -47,24 +48,26 @@ def generate_dummy_features(product_id):
 
 def lambda_handler(event, context):
     try:
-        # Extract SKU from the API call
+        # Read SKU input
         if "body" in event:
             body = json.loads(event["body"])
         else:
             body = event
 
         input_sku = str(body.get("sku"))
+
         if input_sku not in candidate_products:
             return {
                 "statusCode": 400,
                 "body": json.dumps({"error": f"SKU {input_sku} is not in candidate products."})
             }
 
-        # Generate predictions for all candidate products
+        # ----------------------------------
+        # 🟩 SAGEMAKER PREDICTION (UNCHANGED)
+        # ----------------------------------
         results = []
         for product_id in candidate_products:
             payload = generate_dummy_features(product_id)
-            # Build CSV for SageMaker
             df = pd.DataFrame([payload])
             csv_payload = df.to_csv(index=False, header=False)
 
@@ -75,6 +78,7 @@ def lambda_handler(event, context):
             )
 
             result = response['Body'].read().decode('utf-8')
+
             try:
                 prediction = float(json.loads(result)) if result.strip().startswith('[') else float(result)
             except Exception:
@@ -82,22 +86,60 @@ def lambda_handler(event, context):
 
             results.append((product_id, prediction))
 
-        # Sort by score descending
         results.sort(key=lambda x: x[1], reverse=True)
 
-        # Pick the top recommendation that is NOT the input SKU
+        # Best alternative product
         for best_product_id, best_score in results:
             if best_product_id != input_sku:
                 best_name = product_names.get(best_product_id, f"Product {best_product_id}")
                 break
 
+        # ---------------------------------------------------
+        # 🟦 BEDROCK GPT-OSS-20B-1:0  (CHAT COMPLETION FORMAT)
+        # ---------------------------------------------------
+        prompt = f"""
+        Eres un asistente de marketing. Un cliente está comprando el producto con SKU {sku}. 
+        Recomienda el producto '{recommended_product_name}' como el siguiente mejor artículo para complementar su compra. 
+
+        El mensaje debe:
+        - Ser persuasivo, natural y amigable.
+        - Estar completamente en ESPAÑOL.
+        - Mantener el nombre del producto exactamente en inglés.
+        - Ser breve (2–3 líneas máximo).
+        - Incluir únicamente la recomendación, sin explicaciones adicionales ni texto extra.
+
+        Entrega SOLO la recomendación.
+        """
+
+        native_request = {
+            "messages": [
+                {"role": "system", "content": "Eres un experto en marketing que escribe mensajes persuasivos y cortos."},
+                {"role": "user", "content": prompt_message}
+            ],
+            "max_completion_tokens": 120,
+            "temperature": 0.7,
+            "top_p": 0.9
+        }
+
+        br_response = bedrock.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            body=json.dumps(native_request)
+        )
+
+        br_body = json.loads(br_response["body"].read().decode("utf-8"))
+
+        # Extract correctly using OpenAI schema
+        marketing_message = br_body["choices"][0]["message"]["content"].strip()
+
+        # Final response
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "input_sku": input_sku,
                 "recommended_product_id": best_product_id,
                 "recommended_product_name": best_name,
-                "score": best_score
+                "score": best_score,
+                "marketing_message": marketing_message
             })
         }
 
